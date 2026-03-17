@@ -1,1 +1,23 @@
+# Built application files
+*.apk
+*.ap_
+*.aab
+
+# Build folders
+build/
+app/build/
+
+# Local configuration
+local.properties
+
+# IDE files
+.idea/
+*.iml
+.gradle/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Documents (prompts/plans)
 Documents/
