@@ -21,5 +21,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "TravelTrip"
+rootProject.name = "RideSync"
 include(":app")

@@ -7,11 +7,11 @@ plugins {
 }
 
 android {
-    namespace = "com.traveltrip"
+    namespace = "com.ragnar.RideSync"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.traveltrip"
+        applicationId = "com.ragnar.RideSync"
         minSdk = 26
         targetSdk = 35
         versionCode = 1

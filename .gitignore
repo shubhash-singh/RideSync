@@ -14,7 +14,7 @@ local.properties
 .idea/
 *.iml
 .gradle/
-
+.vscode/
 # OS files
 .DS_Store
 Thumbs.db
