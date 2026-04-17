@@ -19,6 +19,13 @@ hiltNavigationCompose = "1.2.0"
 # Coroutines
 coroutines = "1.9.0"
 
+# Credential Manager & Google Identity
+credentials = "1.3.0"
+googleid = "1.1.1"
+
+# Coil (Image loading)
+coil = "2.7.0"
+
 # Testing
 junit = "4.13.2"
 junitExt = "1.2.1"
@@ -54,6 +61,14 @@ hilt-navigation-compose = { group = "androidx.hilt", name = "hilt-navigation-com
 # Coroutines
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-play-services = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-play-services", version.ref = "coroutines" }
+
+# Credential Manager & Google Identity
+androidx-credentials = { group = "androidx.credentials", name = "credentials", version.ref = "credentials" }
+androidx-credentials-play-services = { group = "androidx.credentials", name = "credentials-play-services-auth", version.ref = "credentials" }
+googleid = { group = "com.google.android.libraries.identity.googleid", name = "googleid", version.ref = "googleid" }
+
+# Coil (Image loading)
+coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
 
 # Testing
 junit = { group = "junit", name = "junit", version.ref = "junit" }

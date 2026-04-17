@@ -21,3 +21,5 @@ Thumbs.db
 
 # Documents (prompts/plans)
 Documents/
+# sensative data
+app/google-services.json
