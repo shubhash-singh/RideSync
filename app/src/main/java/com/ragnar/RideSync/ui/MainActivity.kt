@@ -8,15 +8,18 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.navigation.compose.rememberNavController
+import com.ragnar.RideSync.BuildConfig
 import com.ragnar.RideSync.ui.navigation.RideSyncNavGraph
 import com.ragnar.RideSync.ui.navigation.Screen
 import com.ragnar.RideSync.ui.screens.auth.AuthState
 import com.ragnar.RideSync.ui.screens.auth.AuthViewModel
 import com.ragnar.RideSync.ui.theme.RideSyncTheme
+import com.ragnar.RideSync.utils.DebugLogger
 import dagger.hilt.android.AndroidEntryPoint
 
 /**
@@ -26,6 +29,10 @@ import dagger.hilt.android.AndroidEntryPoint
  */
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+
+    private companion object {
+        private const val TAG = "MainActivity"
+    }
 
     private val authViewModel: AuthViewModel by viewModels()
 
@@ -46,6 +53,14 @@ class MainActivity : ComponentActivity() {
                             // authenticated)
                             else -> Screen.Login.route
                         }
+
+                if (BuildConfig.DEBUG) {
+                    LaunchedEffect(startDestination) {
+                        DebugLogger.d(TAG) {
+                            "Start destination = $startDestination (authState=${authState::class.simpleName})"
+                        }
+                    }
+                }
 
                 Surface(
                         modifier = Modifier.fillMaxSize(),

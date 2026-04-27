@@ -2,10 +2,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Permissions will be added in later phases -->
+    <!-- Networking + location (Phase 5: Maps + My Location) -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 
     <application
-        android:name="RideSyncApplication"
+        android:name=".RideSyncApplication"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
@@ -13,6 +16,11 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.RideSync"
         tools:targetApi="35">
+
+        <!-- Google Maps SDK API key (provided via manifestPlaceholders from local.properties) -->
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="${GOOGLE_MAP_KEY}" />
 
         <activity
             android:name=".ui.MainActivity"

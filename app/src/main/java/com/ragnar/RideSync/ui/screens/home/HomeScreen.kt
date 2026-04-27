@@ -26,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -36,8 +37,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import coil.compose.AsyncImage
+import com.ragnar.RideSync.BuildConfig
 import com.ragnar.RideSync.ui.screens.auth.AuthState
 import com.ragnar.RideSync.ui.screens.auth.AuthViewModel
+import com.ragnar.RideSync.utils.DebugLogger
 
 /**
  * Home screen — the landing page of RideSync after authentication. Shows user info (avatar + name),
@@ -45,6 +48,7 @@ import com.ragnar.RideSync.ui.screens.auth.AuthViewModel
  *
  * @param onNavigateToMap Callback when user taps "Open Map"
  * @param onNavigateToTeam Callback when user taps "My Team"
+ * @param onNavigateToProfile Callback when user taps "Profile"
  * @param onSignOut Callback when sign-out completes, to navigate back to Login
  * @param authViewModel Shared auth ViewModel for user info and sign-out
  */
@@ -53,10 +57,15 @@ import com.ragnar.RideSync.ui.screens.auth.AuthViewModel
 fun HomeScreen(
         onNavigateToMap: () -> Unit,
         onNavigateToTeam: () -> Unit,
+        onNavigateToProfile: () -> Unit,
         onSignOut: () -> Unit,
         authViewModel: AuthViewModel = hiltViewModel(),
         modifier: Modifier = Modifier
 ) {
+        if (BuildConfig.DEBUG) {
+                LaunchedEffect(Unit) { DebugLogger.d("HomeScreen") { "Entered" } }
+        }
+
         val authState by authViewModel.authState.collectAsState()
 
         // Extract user info from auth state
@@ -80,7 +89,30 @@ fun HomeScreen(
                                                 containerColor = MaterialTheme.colorScheme.surface
                                         ),
                                 actions = {
-                                        IconButton(onClick = { authViewModel.signOut() }) {
+                                        IconButton(
+                                                onClick = {
+                                                        DebugLogger.d("HomeScreen") {
+                                                                "Navigate -> Profile"
+                                                        }
+                                                        onNavigateToProfile()
+                                                }
+                                        ) {
+                                                Icon(
+                                                        imageVector = Icons.Default.Person,
+                                                        contentDescription = "Profile",
+                                                        tint =
+                                                                MaterialTheme.colorScheme
+                                                                        .onSurfaceVariant
+                                                )
+                                        }
+                                        IconButton(
+                                                onClick = {
+                                                        DebugLogger.d("HomeScreen") {
+                                                                "Sign-out tapped"
+                                                        }
+                                                        authViewModel.signOut()
+                                                }
+                                        ) {
                                                 Icon(
                                                         imageVector =
                                                                 Icons.AutoMirrored.Filled.Logout,
@@ -139,7 +171,10 @@ fun HomeScreen(
 
                         // Open Map button
                         Button(
-                                onClick = onNavigateToMap,
+                                onClick = {
+                                        DebugLogger.d("HomeScreen") { "Navigate -> Map" }
+                                        onNavigateToMap()
+                                },
                                 modifier =
                                         Modifier.fillMaxWidth().height(56.dp).animateContentSize()
                         ) {
@@ -159,7 +194,10 @@ fun HomeScreen(
 
                         // My Team button
                         OutlinedButton(
-                                onClick = onNavigateToTeam,
+                                onClick = {
+                                        DebugLogger.d("HomeScreen") { "Navigate -> Team (not implemented)" }
+                                        onNavigateToTeam()
+                                },
                                 modifier = Modifier.fillMaxWidth().height(56.dp)
                         ) {
                                 Icon(

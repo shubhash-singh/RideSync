@@ -42,7 +42,9 @@ import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.ragnar.RideSync.BuildConfig
 import com.ragnar.RideSync.utils.Constants
+import com.ragnar.RideSync.utils.DebugLogger
 import kotlinx.coroutines.launch
 
 /**
@@ -58,6 +60,10 @@ fun LoginScreen(
         viewModel: AuthViewModel = hiltViewModel(),
         modifier: Modifier = Modifier
 ) {
+    if (BuildConfig.DEBUG) {
+        LaunchedEffect(Unit) { DebugLogger.d("LoginScreen") { "Entered" } }
+    }
+
     val authState by viewModel.authState.collectAsState()
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -134,6 +140,7 @@ fun LoginScreen(
             // Google Sign-In Button
             Button(
                     onClick = {
+                        DebugLogger.d("LoginScreen") { "Sign-in button tapped" }
                         coroutineScope.launch {
                             try {
                                 val credentialManager = CredentialManager.create(context)
@@ -155,6 +162,7 @@ fun LoginScreen(
                                                 context = context
                                         )
 
+                                DebugLogger.d("LoginScreen") { "Credential retrieved. Exchanging for Firebase credential..." }
                                 val googleIdTokenCredential =
                                         GoogleIdTokenCredential.createFrom(result.credential.data)
 
@@ -162,7 +170,9 @@ fun LoginScreen(
                                 viewModel.signInWithGoogleIdToken(idToken)
                             } catch (e: GetCredentialCancellationException) {
                                 // User cancelled — do nothing
+                                DebugLogger.d("LoginScreen") { "Credential flow cancelled by user" }
                             } catch (e: Exception) {
+                                DebugLogger.e("LoginScreen", e) { "Credential flow failed: ${e.localizedMessage}" }
                                 Toast.makeText(
                                                 context,
                                                 "Sign-in failed: ${e.localizedMessage}",

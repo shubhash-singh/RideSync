@@ -36,6 +36,9 @@ android {
             "GOOGLE_WEB_CLIENT_ID",
             "\"${localProperties.getProperty("GOOGLE_WEB_CLIENT_ID", "")}\""
         )
+
+        // Used by AndroidManifest.xml meta-data for the Maps SDK.
+        manifestPlaceholders["GOOGLE_MAP_KEY"] = localProperties.getProperty("GOOGLE_MAP_KEY", "")
     }
 
     buildTypes {
@@ -110,6 +113,10 @@ dependencies {
 
     // Coil (Image loading for avatars)
     implementation(libs.coil.compose)
+
+    // Google Maps (Phase 5)
+    implementation(libs.play.services.maps)
+    implementation(libs.maps.compose)
 
     // Testing
     testImplementation(libs.junit)

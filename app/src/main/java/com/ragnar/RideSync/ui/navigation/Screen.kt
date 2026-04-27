@@ -12,6 +12,9 @@ sealed class Screen(val route: String) {
     /** Login / authentication screen (Phase 3) */
     data object Login : Screen("login")
 
+    /** User profile screen (Phase 4) */
+    data object Profile : Screen("profile")
+
     /** Map screen showing real-time tracking (Phase 5+) */
     data object Map : Screen("map")
 
