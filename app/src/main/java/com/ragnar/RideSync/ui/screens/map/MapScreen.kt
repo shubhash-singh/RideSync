@@ -13,9 +13,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -24,6 +26,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -48,33 +51,39 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import com.ragnar.RideSync.BuildConfig
-import com.ragnar.RideSync.utils.DebugLogger
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.MapProperties
 import com.google.maps.android.compose.MapUiSettings
 import com.google.maps.android.compose.rememberCameraPositionState
+import com.ragnar.RideSync.BuildConfig
+import com.ragnar.RideSync.utils.DebugLogger
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MapScreen(
         onBack: () -> Unit,
-        modifier: Modifier = Modifier
+        modifier: Modifier = Modifier,
+        locationViewModel: LocationViewModel = hiltViewModel()
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val activity = remember(context) { context.findActivity() }
 
     var requestedOnce by rememberSaveable { mutableStateOf(false) }
     var showRationaleDialog by rememberSaveable { mutableStateOf(false) }
+    var hasLocationPermission by remember { mutableStateOf(context.hasAnyLocationPermission()) }
+    var cameraMovedToUser by rememberSaveable { mutableStateOf(false) }
 
-    var hasLocationPermission by remember {
-        mutableStateOf(context.hasAnyLocationPermission())
-    }
+    // Observe live location from ViewModel
+    val currentLocation by locationViewModel.locationState.collectAsStateWithLifecycle()
 
     if (BuildConfig.DEBUG) {
         LaunchedEffect(Unit) { DebugLogger.d("MapScreen") { "Entered" } }
@@ -89,7 +98,6 @@ fun MapScreen(
             rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.RequestMultiplePermissions()
             ) { _ ->
-                // Re-check after the system dialog returns.
                 DebugLogger.d("MapScreen") { "Permission dialog returned. Re-checking..." }
                 hasLocationPermission = context.hasAnyLocationPermission()
             }
@@ -97,14 +105,21 @@ fun MapScreen(
     // Keep permission state in sync when returning from Settings.
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, context) {
-        val observer =
-                LifecycleEventObserver { _, event ->
-                    if (event == Lifecycle.Event.ON_RESUME) {
-                        hasLocationPermission = context.hasAnyLocationPermission()
-                    }
-                }
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                hasLocationPermission = context.hasAnyLocationPermission()
+            }
+        }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // Start location tracking as soon as permission is granted.
+    LaunchedEffect(hasLocationPermission) {
+        if (hasLocationPermission) {
+            DebugLogger.d("MapScreen") { "Permission granted – starting location tracking" }
+            locationViewModel.startTracking()
+        }
     }
 
     val shouldShowRationale =
@@ -158,13 +173,13 @@ fun MapScreen(
                 confirmButton = {
                     Button(
                             onClick = {
-                                DebugLogger.d("MapScreen") { "Rationale accepted. Requesting permissions..." }
+                                DebugLogger.d("MapScreen") {
+                                    "Rationale accepted. Requesting permissions..."
+                                }
                                 showRationaleDialog = false
                                 requestPermissions()
                             }
-                    ) {
-                        Text("Continue")
-                    }
+                    ) { Text("Continue") }
                 },
                 dismissButton = {
                     OutlinedButton(
@@ -177,10 +192,28 @@ fun MapScreen(
         )
     }
 
-    val cameraPositionState =
-            rememberCameraPositionState {
-                position = CameraPosition.fromLatLngZoom(LatLng(0.0, 0.0), 1.5f)
+    val cameraPositionState = rememberCameraPositionState {
+        position = CameraPosition.fromLatLngZoom(LatLng(0.0, 0.0), 1.5f)
+    }
+
+    // Animate camera to first location fix.
+    LaunchedEffect(currentLocation) {
+        val loc = currentLocation ?: return@LaunchedEffect
+        if (!cameraMovedToUser) {
+            cameraMovedToUser = true
+            DebugLogger.d("MapScreen") {
+                "First location fix – animating camera to ${loc.latitude}, ${loc.longitude}"
             }
+            cameraPositionState.animate(
+                    update =
+                            CameraUpdateFactory.newLatLngZoom(
+                                    LatLng(loc.latitude, loc.longitude),
+                                    16f
+                            ),
+                    durationMs = 1000
+            )
+        }
+    }
 
     val uiSettings =
             remember(hasLocationPermission) {
@@ -225,6 +258,49 @@ fun MapScreen(
                     onMapLoaded = { DebugLogger.i("MapScreen") { "GoogleMap loaded" } }
             )
 
+            // ── Live lat/lng chip ─────────────────────────────────────────────
+            AnimatedVisibility(
+                    visible = hasLocationPermission && currentLocation != null,
+                    enter = fadeIn(),
+                    exit = fadeOut(),
+                    modifier = Modifier.align(Alignment.TopEnd).padding(top = 8.dp, end = 8.dp)
+            ) {
+                currentLocation?.let { loc ->
+                    Row(
+                            modifier =
+                                    Modifier.background(
+                                                    color =
+                                                            MaterialTheme.colorScheme.surface.copy(
+                                                                    alpha = 0.90f
+                                                            ),
+                                                    shape = MaterialTheme.shapes.small
+                                            )
+                                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                                imageVector = Icons.Default.MyLocation,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                                text =
+                                        String.format(
+                                                Locale.US,
+                                                "%.5f, %.5f",
+                                                loc.latitude,
+                                                loc.longitude
+                                        ),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+
+            // ── Permission banner ─────────────────────────────────────────────
             AnimatedVisibility(
                     visible = !hasLocationPermission,
                     enter = fadeIn(),
@@ -268,9 +344,7 @@ fun MapScreen(
                                         DebugLogger.d("MapScreen") { "Open Settings tapped" }
                                         context.openAppSettings()
                                     }
-                            ) {
-                                Text("Open Settings")
-                            }
+                            ) { Text("Open Settings") }
                         } else {
                             Button(onClick = onGrantLocationClick) { Text("Grant Permission") }
                         }
@@ -280,6 +354,8 @@ fun MapScreen(
         }
     }
 }
+
+// ─── Extension helpers ──────────────────────────────────────────────────────
 
 private fun Context.hasAnyLocationPermission(): Boolean {
     val coarse =

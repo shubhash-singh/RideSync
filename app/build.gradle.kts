@@ -114,9 +114,10 @@ dependencies {
     // Coil (Image loading for avatars)
     implementation(libs.coil.compose)
 
-    // Google Maps (Phase 5)
+    // Google Maps & Location (Phase 5 & 6)
     implementation(libs.play.services.maps)
     implementation(libs.maps.compose)
+    implementation(libs.play.services.location)
 
     // Testing
     testImplementation(libs.junit)
