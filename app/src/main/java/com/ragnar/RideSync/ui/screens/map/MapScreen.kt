@@ -70,17 +70,15 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
-import com.google.android.gms.maps.CameraUpdateFactory
-import com.google.android.gms.maps.model.CameraPosition
-import com.google.android.gms.maps.model.LatLng
-import com.google.android.gms.maps.model.LatLngBounds
-import com.google.maps.android.compose.GoogleMap
-import com.google.maps.android.compose.MapProperties
-import com.google.maps.android.compose.MapUiSettings
-import com.google.maps.android.compose.Marker
-import com.google.maps.android.compose.MarkerState
-import com.google.maps.android.compose.rememberCameraPositionState
-import com.ragnar.RideSync.BuildConfig
+import com.mapbox.geojson.Point
+import com.mapbox.maps.CameraOptions
+import com.mapbox.maps.extension.compose.MapboxMap
+import com.mapbox.maps.extension.compose.animation.viewport.rememberMapViewportState
+import com.mapbox.maps.extension.compose.annotation.generated.PointAnnotation
+import com.mapbox.maps.extension.compose.style.MapStyle
+import com.mapbox.maps.plugin.locationcomponent.createDefault2DPuck
+import com.mapbox.maps.plugin.locationcomponent.location
+import com.mapbox.maps.extension.compose.MapEffect
 import com.ragnar.RideSync.domain.model.TeamMember
 import com.ragnar.RideSync.utils.DebugLogger
 import java.util.Locale
@@ -108,7 +106,7 @@ fun MapScreen(
     val members by teamMapViewModel.members.collectAsStateWithLifecycle()
     val hasTeam = !teamMapViewModel.teamId.isNullOrBlank()
 
-    if (BuildConfig.DEBUG) {
+    if (com.ragnar.RideSync.BuildConfig.DEBUG) {
         LaunchedEffect(Unit) { DebugLogger.d("MapScreen") { "Entered" } }
         LaunchedEffect(hasLocationPermission, requestedOnce) {
             DebugLogger.d("MapScreen") {
@@ -206,8 +204,13 @@ fun MapScreen(
         )
     }
 
-    val cameraPositionState = rememberCameraPositionState {
-        position = CameraPosition.fromLatLngZoom(LatLng(0.0, 0.0), 1.5f)
+    // ── Mapbox: camera / viewport state ──────────────────────────────────────
+    val mapViewportState = rememberMapViewportState {
+        // Default overview of the world; will animate to user location on first fix.
+        setCameraOptions {
+            center(Point.fromLngLat(0.0, 0.0))
+            zoom(1.5)
+        }
     }
 
     // Animate camera to first user location fix.
@@ -218,13 +221,15 @@ fun MapScreen(
             DebugLogger.d("MapScreen") {
                 "First location fix – animating camera to ${loc.latitude}, ${loc.longitude}"
             }
-            cameraPositionState.animate(
-                    update =
-                            CameraUpdateFactory.newLatLngZoom(
-                                    LatLng(loc.latitude, loc.longitude),
-                                    16f
-                            ),
-                    durationMs = 1000
+            mapViewportState.flyTo(
+                    cameraOptions = CameraOptions.Builder()
+                            .center(Point.fromLngLat(loc.longitude, loc.latitude))
+                            .zoom(16.0)
+                            .build(),
+                    animationOptions =
+                            com.mapbox.maps.plugin.animation.MapAnimationOptions.mapAnimationOptions {
+                                duration(1000L)
+                            }
             )
         }
     }
@@ -233,36 +238,33 @@ fun MapScreen(
     LaunchedEffect(members) {
         val withLocation = members.filter { it.lastLocation != null }
         if (withLocation.size >= 2) {
-            val boundsBuilder = LatLngBounds.builder()
-            currentLocation?.let { boundsBuilder.include(LatLng(it.latitude, it.longitude)) }
-            withLocation.forEach { m ->
-                m.lastLocation?.let { loc ->
-                    boundsBuilder.include(LatLng(loc.latitude, loc.longitude))
-                }
+            // Compute a rough geographic centre and a generous zoom.
+            val lats = buildList {
+                currentLocation?.let { add(it.latitude) }
+                withLocation.forEach { m -> m.lastLocation?.let { add(it.latitude) } }
             }
-            try {
-                cameraPositionState.animate(
-                        update = CameraUpdateFactory.newLatLngBounds(boundsBuilder.build(), 120),
-                        durationMs = 1200
+            val lngs = buildList {
+                currentLocation?.let { add(it.longitude) }
+                withLocation.forEach { m -> m.lastLocation?.let { add(it.longitude) } }
+            }
+            if (lats.isNotEmpty() && lngs.isNotEmpty()) {
+                val centerLat = (lats.min() + lats.max()) / 2.0
+                val centerLng = (lngs.min() + lngs.max()) / 2.0
+                // Rough zoom: shrink by 1 step for every 0.1° span (very approximate).
+                val span = maxOf(lats.max() - lats.min(), lngs.max() - lngs.min())
+                val zoom = (14.0 - span * 5.0).coerceIn(5.0, 14.0)
+                mapViewportState.flyTo(
+                        cameraOptions = CameraOptions.Builder()
+                                .center(Point.fromLngLat(centerLng, centerLat))
+                                .zoom(zoom)
+                                .build(),
+                        animationOptions =
+                                com.mapbox.maps.plugin.animation.MapAnimationOptions
+                                        .mapAnimationOptions { duration(1200L) }
                 )
-            } catch (_: Exception) {
-                /* bounds builder may throw if only 1 point */
             }
         }
     }
-
-    val uiSettings =
-            remember(hasLocationPermission) {
-                MapUiSettings(
-                        zoomControlsEnabled = true,
-                        myLocationButtonEnabled = hasLocationPermission
-                )
-            }
-
-    val properties =
-            remember(hasLocationPermission) {
-                MapProperties(isMyLocationEnabled = hasLocationPermission)
-            }
 
     val scaffoldState = rememberBottomSheetScaffoldState()
 
@@ -315,33 +317,33 @@ fun MapScreen(
             }
     ) { innerPadding ->
         Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
-            GoogleMap(
+
+            // ── Mapbox map ────────────────────────────────────────────────────
+            MapboxMap(
                     modifier = Modifier.fillMaxSize(),
-                    cameraPositionState = cameraPositionState,
-                    properties = properties,
-                    uiSettings = uiSettings,
-                    onMapLoaded = { DebugLogger.i("MapScreen") { "GoogleMap loaded" } }
+                    mapViewportState = mapViewportState,
+                    style = { MapStyle(style = com.mapbox.maps.Style.STANDARD) },
             ) {
-                // Phase 8: Render a standard marker for each team member who has a known location
+                // Configure location puck on first load and re-apply when permission changes.
+                MapEffect(hasLocationPermission) { mapView ->
+                    mapView.location.updateSettings {
+                        enabled = hasLocationPermission
+                        locationPuck = createDefault2DPuck(withBearing = true)
+                    }
+                    DebugLogger.i("MapScreen") { "Mapbox map ready, puck enabled=$hasLocationPermission" }
+                }
+
+                // Phase 8: Render a PointAnnotation for each team member who has a known location.
                 members.forEach { member ->
                     val loc = member.lastLocation ?: return@forEach
-                    // MarkerState is keyed to the member's latest coordinates so it
-                    // recomposes (and re-positions) on every location update.
-                    val markerState =
-                            remember(member.userId, loc.latitude, loc.longitude) {
-                                MarkerState(position = LatLng(loc.latitude, loc.longitude))
-                            }
-                    Marker(
-                            state = markerState,
-                            title = member.displayName ?: "Member",
-                            snippet =
-                                    String.format(
-                                            Locale.US,
-                                            "%.4f, %.4f",
-                                            loc.latitude,
-                                            loc.longitude
-                                    )
-                    )
+                    PointAnnotation(
+                            point = Point.fromLngLat(loc.longitude, loc.latitude)
+                    ) {
+                        // Mapbox will render a default pin; textField shows the member name.
+                        textField = member.displayName ?: "Member"
+                        textSize = 12.0
+                        textOffset = listOf(0.0, 2.0)
+                    }
                 }
             }
 

@@ -36,9 +36,11 @@ android {
             "GOOGLE_WEB_CLIENT_ID",
             "\"${localProperties.getProperty("GOOGLE_WEB_CLIENT_ID", "")}\""
         )
-
-        // Used by AndroidManifest.xml meta-data for the Maps SDK.
-        manifestPlaceholders["GOOGLE_MAP_KEY"] = localProperties.getProperty("GOOGLE_MAP_KEY", "")
+        buildConfigField(
+            "String",
+            "MAPBOX_ACCESS_TOKEN",
+            "\"${localProperties.getProperty("MAPBOX_ACCESS_TOKEN", "")}\""
+        )
     }
 
     buildTypes {
@@ -114,9 +116,11 @@ dependencies {
     // Coil (Image loading for avatars)
     implementation(libs.coil.compose)
 
-    // Google Maps & Location (Phase 5 & 6)
-    implementation(libs.play.services.maps)
-    implementation(libs.maps.compose)
+    // Mapbox Maps SDK & Compose extension (replaces Google Maps SDK)
+    implementation(libs.mapbox.maps.android)
+    implementation(libs.mapbox.maps.compose)
+
+    // Google Play Services Location — FusedLocationProviderClient for GPS (Phase 6, kept)
     implementation(libs.play.services.location)
 
     // Testing

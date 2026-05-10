@@ -71,10 +71,13 @@ fun TeamLobbyScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
+    // Guard: only navigate away once — prevents re-entry if state updates after pop
+    var navigatedToTeam by remember { mutableStateOf(false) }
 
     // Navigate to team details once we're InTeam
     LaunchedEffect(uiState) {
-        if (uiState is TeamUiState.InTeam) {
+        if (!navigatedToTeam && uiState is TeamUiState.InTeam) {
+            navigatedToTeam = true
             onTeamJoined((uiState as TeamUiState.InTeam).team.id)
         }
     }

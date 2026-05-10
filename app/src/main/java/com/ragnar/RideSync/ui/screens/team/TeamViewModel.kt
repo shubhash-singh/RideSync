@@ -57,6 +57,12 @@ constructor(
     private val _uiState = MutableStateFlow<TeamUiState>(TeamUiState.Idle)
     val uiState: StateFlow<TeamUiState> = _uiState.asStateFlow()
 
+    /** Tracks which teamId we are currently observing to avoid duplicate listeners. */
+    private var observingTeamId: String? = null
+
+    /** Ensures we only subscribe to observeUser once across the VM lifetime. */
+    private var userObserverStarted = false
+
     init {
         loadExistingTeamIfAny()
     }
@@ -66,6 +72,9 @@ constructor(
     // ──────────────────────────────────────────────────────────────────────────
 
     private fun loadExistingTeamIfAny() {
+        if (userObserverStarted) return   // guard: only subscribe once per VM instance
+        userObserverStarted = true
+
         val uid = auth.currentUser?.uid ?: return
         DebugLogger.d(TAG) { "Checking for existing team (uid=$uid)" }
 
@@ -78,19 +87,22 @@ constructor(
                             DebugLogger.d(TAG) {
                                 "User belongs to team=$teamId, starting observers"
                             }
-                            startObservingTeam(teamId)
+                            startObservingTeam(teamId)  // no-op if already observing this id
                         } else if (_uiState.value is TeamUiState.Idle ||
                                         _uiState.value is TeamUiState.Loading
                         ) {
-                            // No team yet — make sure we're Idle (not loading)
+                            // No team yet — remain Idle
                         }
                     }
                 }
                 .launchIn(viewModelScope)
     }
 
-    /** Subscribes to both the team doc and its members sub-collection. */
+    /** Subscribes to both the team doc and its members sub-collection. No-op if already observing this team. */
     private fun startObservingTeam(teamId: String) {
+        if (observingTeamId == teamId) return  // already listening — skip to avoid duplicates
+        observingTeamId = teamId
+
         // Observe team document
         teamRepository
                 .observeTeam(teamId)

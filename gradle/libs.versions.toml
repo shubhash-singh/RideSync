@@ -26,10 +26,11 @@ googleid = "1.1.1"
 # Coil (Image loading)
 coil = "2.7.0"
 
-# Google Maps & Location
-playServicesMaps = "18.2.0"
+# Mapbox Maps SDK
+mapbox = "11.23.0"
+
+# Google Play Services Location (FusedLocationProviderClient — kept)
 playServicesLocation = "21.3.0"
-mapsCompose = "2.11.4"
 
 # Testing
 junit = "4.13.2"
@@ -75,10 +76,12 @@ googleid = { group = "com.google.android.libraries.identity.googleid", name = "g
 # Coil (Image loading)
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
 
-# Google Maps & Location
-play-services-maps = { group = "com.google.android.gms", name = "play-services-maps", version.ref = "playServicesMaps" }
+# Mapbox Maps SDK & Compose extension
+mapbox-maps-android = { group = "com.mapbox.maps", name = "android", version.ref = "mapbox" }
+mapbox-maps-compose = { group = "com.mapbox.extension", name = "maps-compose", version.ref = "mapbox" }
+
+# Google Play Services Location (FusedLocationProviderClient — kept)
 play-services-location = { group = "com.google.android.gms", name = "play-services-location", version.ref = "playServicesLocation" }
-maps-compose = { group = "com.google.maps.android", name = "maps-compose", version.ref = "mapsCompose" }
 
 # Testing
 junit = { group = "junit", name = "junit", version.ref = "junit" }

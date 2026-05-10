@@ -81,9 +81,16 @@ fun TeamDetailsScreen(
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val clipboard = LocalClipboardManager.current
+    // Only trigger onLeft after we've seen at least one InTeam state,
+    // so we don't immediately pop back on the initial Idle before Firestore loads.
+    var hasBeenInTeam by remember { mutableStateOf(false) }
 
-    // Navigate out on leave / disband
-    LaunchedEffect(uiState) { if (uiState is TeamUiState.Idle) onLeft() }
+    LaunchedEffect(uiState) {
+        when {
+            uiState is TeamUiState.InTeam -> hasBeenInTeam = true
+            uiState is TeamUiState.Idle && hasBeenInTeam -> onLeft()
+        }
+    }
 
     LaunchedEffect(uiState) {
         if (uiState is TeamUiState.Error) {
