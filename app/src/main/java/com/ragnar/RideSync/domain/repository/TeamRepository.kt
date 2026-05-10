@@ -40,6 +40,14 @@ interface TeamRepository : BaseRepository {
      */
     fun disbandTeam(teamId: String): Flow<Result<Unit>>
 
+    /** Updates the team's shared destination on the team document. */
+    fun setDestination(
+            teamId: String,
+            latitude: Double,
+            longitude: Double,
+            address: String?
+    ): Flow<Result<Unit>>
+
     /** Real-time snapshot of the team document. Emits Success(null) when missing. */
     fun observeTeam(teamId: String): Flow<Result<Team?>>
 

@@ -31,6 +31,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MyLocation
@@ -39,6 +40,7 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.BottomSheetScaffold
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -60,6 +62,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
@@ -72,16 +75,19 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.mapbox.geojson.Point
 import com.mapbox.maps.CameraOptions
+import com.mapbox.maps.extension.compose.MapEffect
 import com.mapbox.maps.extension.compose.MapboxMap
 import com.mapbox.maps.extension.compose.animation.viewport.rememberMapViewportState
 import com.mapbox.maps.extension.compose.annotation.generated.PointAnnotation
+import com.mapbox.maps.extension.compose.annotation.generated.PolylineAnnotation
 import com.mapbox.maps.extension.compose.style.MapStyle
+import com.mapbox.maps.plugin.gestures.OnMapLongClickListener
 import com.mapbox.maps.plugin.locationcomponent.createDefault2DPuck
 import com.mapbox.maps.plugin.locationcomponent.location
-import com.mapbox.maps.extension.compose.MapEffect
 import com.ragnar.RideSync.domain.model.TeamMember
 import com.ragnar.RideSync.utils.DebugLogger
 import java.util.Locale
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -89,7 +95,8 @@ fun MapScreen(
         onBack: () -> Unit,
         modifier: Modifier = Modifier,
         locationViewModel: LocationViewModel = hiltViewModel(),
-        teamMapViewModel: TeamMapViewModel = hiltViewModel()
+        teamMapViewModel: TeamMapViewModel = hiltViewModel(),
+        navigationViewModel: NavigationViewModel = hiltViewModel()
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val activity = remember(context) { context.findActivity() }
@@ -102,9 +109,18 @@ fun MapScreen(
     // Observe live location from ViewModel
     val currentLocation by locationViewModel.locationState.collectAsStateWithLifecycle()
 
-    // Phase 8: team member locations
+    // Phase 8-10: team context, destination and route state
+    val activeTeam by teamMapViewModel.team.collectAsStateWithLifecycle()
+    val activeTeamId by teamMapViewModel.teamId.collectAsStateWithLifecycle()
     val members by teamMapViewModel.members.collectAsStateWithLifecycle()
-    val hasTeam = !teamMapViewModel.teamId.isNullOrBlank()
+    val destinationState by teamMapViewModel.destinationState.collectAsStateWithLifecycle()
+    val routeState by navigationViewModel.routeState.collectAsStateWithLifecycle()
+    val hasTeam = !activeTeamId.isNullOrBlank()
+    val isLeader = hasTeam && activeTeam?.leaderId == teamMapViewModel.currentUserId
+    val destinationLat = activeTeam?.destinationLat
+    val destinationLng = activeTeam?.destinationLng
+    val destinationAddress = activeTeam?.destinationAddress
+    val hasDestination = destinationLat != null && destinationLng != null
 
     if (com.ragnar.RideSync.BuildConfig.DEBUG) {
         LaunchedEffect(Unit) { DebugLogger.d("MapScreen") { "Entered" } }
@@ -140,6 +156,31 @@ fun MapScreen(
         if (hasLocationPermission) {
             DebugLogger.d("MapScreen") { "Permission granted – starting location tracking" }
             locationViewModel.startTracking()
+        }
+    }
+
+    LaunchedEffect(currentLocation, destinationLat, destinationLng) {
+        val loc = currentLocation
+        val lat = destinationLat
+        val lng = destinationLng
+        if (loc != null && lat != null && lng != null) {
+            navigationViewModel.updateRoute(
+                    originLatitude = loc.latitude,
+                    originLongitude = loc.longitude,
+                    destinationLatitude = lat,
+                    destinationLongitude = lng
+            )
+        } else {
+            navigationViewModel.clearRoute()
+        }
+    }
+
+    LaunchedEffect(destinationState) {
+        if (destinationState is DestinationUiState.Saved ||
+                        destinationState is DestinationUiState.Error
+        ) {
+            delay(3_500L)
+            teamMapViewModel.clearDestinationMessage()
         }
     }
 
@@ -234,39 +275,48 @@ fun MapScreen(
         }
     }
 
-    // Phase 8: When team members have locations, fit camera to include all of them.
-    LaunchedEffect(members) {
-        val withLocation = members.filter { it.lastLocation != null }
-        if (withLocation.size >= 2) {
-            // Compute a rough geographic centre and a generous zoom.
-            val lats = buildList {
-                currentLocation?.let { add(it.latitude) }
-                withLocation.forEach { m -> m.lastLocation?.let { add(it.latitude) } }
-            }
-            val lngs = buildList {
-                currentLocation?.let { add(it.longitude) }
-                withLocation.forEach { m -> m.lastLocation?.let { add(it.longitude) } }
-            }
-            if (lats.isNotEmpty() && lngs.isNotEmpty()) {
-                val centerLat = (lats.min() + lats.max()) / 2.0
-                val centerLng = (lngs.min() + lngs.max()) / 2.0
-                // Rough zoom: shrink by 1 step for every 0.1° span (very approximate).
-                val span = maxOf(lats.max() - lats.min(), lngs.max() - lngs.min())
-                val zoom = (14.0 - span * 5.0).coerceIn(5.0, 14.0)
-                mapViewportState.flyTo(
-                        cameraOptions = CameraOptions.Builder()
-                                .center(Point.fromLngLat(centerLng, centerLat))
-                                .zoom(zoom)
-                                .build(),
-                        animationOptions =
-                                com.mapbox.maps.plugin.animation.MapAnimationOptions
-                                        .mapAnimationOptions { duration(1200L) }
-                )
-            }
+    // Phase 8-10: Fit camera to members plus the shared destination when enough points exist.
+    LaunchedEffect(members, destinationLat, destinationLng) {
+        val lats = buildList {
+            currentLocation?.let { add(it.latitude) }
+            members.forEach { m -> m.lastLocation?.let { add(it.latitude) } }
+            destinationLat?.let { add(it) }
+        }
+        val lngs = buildList {
+            currentLocation?.let { add(it.longitude) }
+            members.forEach { m -> m.lastLocation?.let { add(it.longitude) } }
+            destinationLng?.let { add(it) }
+        }
+        if (lats.size >= 2 && lngs.size >= 2) {
+            val centerLat = (lats.min() + lats.max()) / 2.0
+            val centerLng = (lngs.min() + lngs.max()) / 2.0
+            // Rough zoom: shrink by 1 step for every 0.1° span (very approximate).
+            val span = maxOf(lats.max() - lats.min(), lngs.max() - lngs.min())
+            val zoom = (14.0 - span * 5.0).coerceIn(5.0, 14.0)
+            mapViewportState.flyTo(
+                    cameraOptions = CameraOptions.Builder()
+                            .center(Point.fromLngLat(centerLng, centerLat))
+                            .zoom(zoom)
+                            .build(),
+                    animationOptions =
+                            com.mapbox.maps.plugin.animation.MapAnimationOptions
+                                    .mapAnimationOptions { duration(1200L) }
+            )
         }
     }
 
     val scaffoldState = rememberBottomSheetScaffoldState()
+    val mapLongClickListener =
+            remember(isLeader, hasTeam) {
+                OnMapLongClickListener { point ->
+                    if (isLeader && hasTeam) {
+                        teamMapViewModel.setDestination(point.latitude(), point.longitude())
+                        true
+                    } else {
+                        false
+                    }
+                }
+            }
 
     BottomSheetScaffold(
             modifier = modifier,
@@ -322,6 +372,7 @@ fun MapScreen(
             MapboxMap(
                     modifier = Modifier.fillMaxSize(),
                     mapViewportState = mapViewportState,
+                    onMapLongClickListener = mapLongClickListener,
                     style = { MapStyle(style = com.mapbox.maps.Style.STANDARD) },
             ) {
                 // Configure location puck on first load and re-apply when permission changes.
@@ -343,6 +394,33 @@ fun MapScreen(
                         textField = member.displayName ?: "Member"
                         textSize = 12.0
                         textOffset = listOf(0.0, 2.0)
+                    }
+                }
+
+                val readyRoute = (routeState as? NavigationUiState.RouteReady)?.route
+                val routePoints =
+                        readyRoute
+                                ?.coordinates
+                                ?.map { Point.fromLngLat(it.longitude, it.latitude) }
+                                ?: emptyList()
+                if (routePoints.size >= 2) {
+                    PolylineAnnotation(points = routePoints) {
+                        lineColor = Color(0xFF1565C0)
+                        lineWidth = 6.0
+                        lineOpacity = 0.92
+                    }
+                }
+
+                if (destinationLat != null && destinationLng != null) {
+                    PointAnnotation(point = Point.fromLngLat(destinationLng, destinationLat)) {
+                        iconColor = Color(0xFFE53935)
+                        iconSize = 1.35
+                        textField = destinationAddress?.takeIf { it.isNotBlank() } ?: "Destination"
+                        textSize = 12.0
+                        textColor = Color(0xFFE53935)
+                        textHaloColor = Color.White
+                        textHaloWidth = 1.5
+                        textOffset = listOf(0.0, 2.2)
                     }
                 }
             }
@@ -388,6 +466,30 @@ fun MapScreen(
                     }
                 }
             }
+
+            Column(
+                    modifier = Modifier.align(Alignment.TopStart).padding(top = 8.dp, start = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                TeamMapHintCard(
+                        hasTeam = hasTeam,
+                        isLeader = isLeader,
+                        hasDestination = hasDestination,
+                        destinationAddress = destinationAddress
+                )
+                DestinationStatusCard(destinationState = destinationState)
+            }
+
+            RouteSummaryCard(
+                    routeState = routeState,
+                    modifier =
+                            Modifier.align(Alignment.BottomCenter)
+                                    .padding(
+                                            start = 16.dp,
+                                            end = 16.dp,
+                                            bottom = if (hasTeam && members.isNotEmpty()) 88.dp else 16.dp
+                                    )
+            )
 
             // ── Permission banner ─────────────────────────────────────────────
             AnimatedVisibility(
@@ -438,6 +540,179 @@ fun MapScreen(
     }
 }
 
+
+// ─── Phase 9/10: Destination and route overlay cards ────────────────────────
+
+@Composable
+private fun TeamMapHintCard(
+        hasTeam: Boolean,
+        isLeader: Boolean,
+        hasDestination: Boolean,
+        destinationAddress: String?
+) {
+    val message =
+            when {
+                !hasTeam -> "Join a team to share destinations."
+                isLeader && !hasDestination -> "Long-press the map to set the team destination."
+                isLeader -> "Long-press anywhere to update the destination."
+                hasDestination -> destinationAddress?.takeIf { it.isNotBlank() } ?: "Destination set."
+                else -> "Waiting for the leader to set a destination."
+            }
+    Surface(
+            tonalElevation = 3.dp,
+            shadowElevation = 2.dp,
+            shape = MaterialTheme.shapes.medium,
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.93f)
+    ) {
+        Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(
+                    imageVector = if (hasDestination) Icons.Default.Flag else Icons.Default.LocationOn,
+                    contentDescription = null,
+                    tint =
+                            if (hasDestination) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp)
+            )
+            Text(
+                    text = message,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+            )
+        }
+    }
+}
+
+@Composable
+private fun DestinationStatusCard(destinationState: DestinationUiState) {
+    val message =
+            when (destinationState) {
+                DestinationUiState.Idle -> return
+                DestinationUiState.Saving -> "Saving destination..."
+                is DestinationUiState.Saved -> "Destination saved: ${destinationState.address}"
+                is DestinationUiState.Error -> destinationState.message
+            }
+    Surface(
+            tonalElevation = 3.dp,
+            shadowElevation = 2.dp,
+            shape = MaterialTheme.shapes.medium,
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
+    ) {
+        Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            if (destinationState is DestinationUiState.Saving) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+            } else {
+                Icon(
+                        imageVector = Icons.Default.Flag,
+                        contentDescription = null,
+                        tint =
+                                if (destinationState is DestinationUiState.Error)
+                                        MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                )
+            }
+            Text(
+                    text = message,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+            )
+        }
+    }
+}
+
+@Composable
+private fun RouteSummaryCard(routeState: NavigationUiState, modifier: Modifier = Modifier) {
+    when (routeState) {
+        NavigationUiState.Idle -> return
+        NavigationUiState.Loading -> {
+            Surface(
+                    modifier = modifier.fillMaxWidth(),
+                    tonalElevation = 4.dp,
+                    shadowElevation = 3.dp,
+                    shape = MaterialTheme.shapes.large,
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
+            ) {
+                Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Text("Calculating route...", style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
+        is NavigationUiState.RouteReady -> {
+            Surface(
+                    modifier = modifier.fillMaxWidth(),
+                    tonalElevation = 4.dp,
+                    shadowElevation = 3.dp,
+                    shape = MaterialTheme.shapes.large,
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
+            ) {
+                Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Icon(
+                            imageVector = Icons.Default.MyLocation,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
+                    )
+                    Column {
+                        Text(
+                                text = formatDuration(routeState.route.durationSeconds),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                                text = formatDistance(routeState.route.distanceMeters),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+        is NavigationUiState.Error -> {
+            Surface(
+                    modifier = modifier.fillMaxWidth(),
+                    tonalElevation = 4.dp,
+                    shadowElevation = 3.dp,
+                    shape = MaterialTheme.shapes.large,
+                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.96f)
+            ) {
+                Text(
+                        text = routeState.message,
+                        modifier = Modifier.padding(16.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                )
+            }
+        }
+    }
+}
+
+private fun formatDistance(meters: Double): String =
+        if (meters < 1000) "${meters.toInt()} m"
+        else String.format(Locale.US, "%.1f km", meters / 1000.0)
+
+private fun formatDuration(seconds: Double): String {
+    val minutes = (seconds / 60.0).toInt().coerceAtLeast(1)
+    val hours = minutes / 60
+    val remainingMinutes = minutes % 60
+    return if (hours > 0) "${hours}h ${remainingMinutes}m" else "$minutes min"
+}
 
 // ─── Phase 8: Member bottom sheet ────────────────────────────────────────────
 

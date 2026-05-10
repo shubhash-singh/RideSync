@@ -212,6 +212,36 @@ class FirestoreTeamRepository @Inject constructor(private val firestore: Firebas
         }
     }
 
+    override fun setDestination(
+            teamId: String,
+            latitude: Double,
+            longitude: Double,
+            address: String?
+    ): Flow<Result<Unit>> = flow {
+        emit(Result.Loading)
+        DebugLogger.d(TAG) {
+            "setDestination(teamId=$teamId lat=$latitude lng=$longitude address=$address)"
+        }
+        try {
+            firestore
+                    .collection(Constants.COLLECTION_TEAMS)
+                    .document(teamId)
+                    .update(
+                            mapOf(
+                                    "destinationLat" to latitude,
+                                    "destinationLng" to longitude,
+                                    "destinationAddress" to address
+                            )
+                    )
+                    .await()
+            DebugLogger.i(TAG) { "setDestination success: teamId=$teamId" }
+            emit(Result.Success(Unit))
+        } catch (e: Exception) {
+            DebugLogger.e(TAG, e) { "setDestination failed: ${e.localizedMessage}" }
+            emit(Result.Error(exception = e, message = e.localizedMessage))
+        }
+    }
+
     // ──────────────────────────────────────────────────────────────────────────
     // Real-time observers
     // ──────────────────────────────────────────────────────────────────────────
