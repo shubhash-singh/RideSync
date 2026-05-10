@@ -34,13 +34,17 @@ fun UserDto.toDomain(userId: String): User =
                 photoUrl = photoUrl,
                 lastLocation =
                         lastLocation?.let { loc ->
-                            val lat = loc.lat
-                            val lng = loc.lng
-                            if (lat != null && lng != null) {
-                                UserLocation(latitude = lat, longitude = lng, updatedAt = loc.updatedAt)
-                            } else {
-                                null
-                            }
+                                val lat = loc.lat
+                                val lng = loc.lng
+                                if (lat != null && lng != null) {
+                                        UserLocation(
+                                                latitude = lat,
+                                                longitude = lng,
+                                                updatedAt = loc.updatedAt
+                                        )
+                                } else {
+                                        null
+                                }
                         },
                 currentTeamId = currentTeamId,
                 fcmToken = fcmToken
@@ -53,13 +57,16 @@ fun User.toDto(): UserDto =
                 photoUrl = photoUrl,
                 lastLocation =
                         lastLocation?.let { loc ->
-                            UserLocationDto(
-                                    lat = loc.latitude,
-                                    lng = loc.longitude,
-                                    updatedAt = loc.updatedAt
-                            )
+                                UserLocationDto(
+                                        lat = loc.latitude,
+                                        lng = loc.longitude,
+                                        updatedAt = loc.updatedAt
+                                )
                         },
                 currentTeamId = currentTeamId,
                 fcmToken = fcmToken
         )
 
+/** Converts a domain [UserLocation] to its Firestore [UserLocationDto]. */
+fun UserLocation.toDto(): UserLocationDto =
+        UserLocationDto(lat = latitude, lng = longitude, updatedAt = updatedAt)

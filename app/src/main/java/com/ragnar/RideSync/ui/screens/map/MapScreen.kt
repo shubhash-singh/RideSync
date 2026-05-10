@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.location.Location
 import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -17,27 +18,37 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.BottomSheetScaffold
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberBottomSheetScaffoldState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -48,6 +59,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -56,14 +69,19 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.LatLngBounds
 import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.MapProperties
 import com.google.maps.android.compose.MapUiSettings
+import com.google.maps.android.compose.Marker
+import com.google.maps.android.compose.MarkerState
 import com.google.maps.android.compose.rememberCameraPositionState
 import com.ragnar.RideSync.BuildConfig
+import com.ragnar.RideSync.domain.model.TeamMember
 import com.ragnar.RideSync.utils.DebugLogger
 import java.util.Locale
 
@@ -72,7 +90,8 @@ import java.util.Locale
 fun MapScreen(
         onBack: () -> Unit,
         modifier: Modifier = Modifier,
-        locationViewModel: LocationViewModel = hiltViewModel()
+        locationViewModel: LocationViewModel = hiltViewModel(),
+        teamMapViewModel: TeamMapViewModel = hiltViewModel()
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val activity = remember(context) { context.findActivity() }
@@ -84,6 +103,10 @@ fun MapScreen(
 
     // Observe live location from ViewModel
     val currentLocation by locationViewModel.locationState.collectAsStateWithLifecycle()
+
+    // Phase 8: team member locations
+    val members by teamMapViewModel.members.collectAsStateWithLifecycle()
+    val hasTeam = !teamMapViewModel.teamId.isNullOrBlank()
 
     if (BuildConfig.DEBUG) {
         LaunchedEffect(Unit) { DebugLogger.d("MapScreen") { "Entered" } }
@@ -153,7 +176,6 @@ fun MapScreen(
 
     val onGrantLocationClick: () -> Unit = {
         if (shouldShowRationale) {
-            DebugLogger.d("MapScreen") { "Showing permission rationale dialog" }
             showRationaleDialog = true
         } else {
             requestPermissions()
@@ -173,21 +195,13 @@ fun MapScreen(
                 confirmButton = {
                     Button(
                             onClick = {
-                                DebugLogger.d("MapScreen") {
-                                    "Rationale accepted. Requesting permissions..."
-                                }
                                 showRationaleDialog = false
                                 requestPermissions()
                             }
                     ) { Text("Continue") }
                 },
                 dismissButton = {
-                    OutlinedButton(
-                            onClick = {
-                                DebugLogger.d("MapScreen") { "Rationale dismissed" }
-                                showRationaleDialog = false
-                            }
-                    ) { Text("Not now") }
+                    OutlinedButton(onClick = { showRationaleDialog = false }) { Text("Not now") }
                 }
         )
     }
@@ -196,7 +210,7 @@ fun MapScreen(
         position = CameraPosition.fromLatLngZoom(LatLng(0.0, 0.0), 1.5f)
     }
 
-    // Animate camera to first location fix.
+    // Animate camera to first user location fix.
     LaunchedEffect(currentLocation) {
         val loc = currentLocation ?: return@LaunchedEffect
         if (!cameraMovedToUser) {
@@ -215,6 +229,28 @@ fun MapScreen(
         }
     }
 
+    // Phase 8: When team members have locations, fit camera to include all of them.
+    LaunchedEffect(members) {
+        val withLocation = members.filter { it.lastLocation != null }
+        if (withLocation.size >= 2) {
+            val boundsBuilder = LatLngBounds.builder()
+            currentLocation?.let { boundsBuilder.include(LatLng(it.latitude, it.longitude)) }
+            withLocation.forEach { m ->
+                m.lastLocation?.let { loc ->
+                    boundsBuilder.include(LatLng(loc.latitude, loc.longitude))
+                }
+            }
+            try {
+                cameraPositionState.animate(
+                        update = CameraUpdateFactory.newLatLngBounds(boundsBuilder.build(), 120),
+                        durationMs = 1200
+                )
+            } catch (_: Exception) {
+                /* bounds builder may throw if only 1 point */
+            }
+        }
+    }
+
     val uiSettings =
             remember(hasLocationPermission) {
                 MapUiSettings(
@@ -228,8 +264,18 @@ fun MapScreen(
                 MapProperties(isMyLocationEnabled = hasLocationPermission)
             }
 
-    Scaffold(
+    val scaffoldState = rememberBottomSheetScaffoldState()
+
+    BottomSheetScaffold(
             modifier = modifier,
+            scaffoldState = scaffoldState,
+            sheetPeekHeight = if (hasTeam && members.isNotEmpty()) 72.dp else 0.dp,
+            sheetContent = {
+                // Phase 8: Team member list in a bottom sheet
+                if (hasTeam) {
+                    MemberListSheet(members = members, currentLocation = currentLocation)
+                }
+            },
             topBar = {
                 TopAppBar(
                         title = { Text("Map") },
@@ -241,9 +287,28 @@ fun MapScreen(
                                     }
                             ) {
                                 Icon(
-                                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                        Icons.AutoMirrored.Filled.ArrowBack,
                                         contentDescription = "Back"
                                 )
+                            }
+                        },
+                        actions = {
+                            // Team member count badge (Phase 8)
+                            if (hasTeam) {
+                                BadgedBox(
+                                        badge = {
+                                            if (members.isNotEmpty()) {
+                                                Badge { Text(members.size.toString()) }
+                                            }
+                                        }
+                                ) {
+                                    Icon(
+                                            Icons.Default.Group,
+                                            contentDescription = "Team members",
+                                            modifier = Modifier.size(24.dp)
+                                    )
+                                }
+                                Spacer(Modifier.width(12.dp))
                             }
                         }
                 )
@@ -256,7 +321,29 @@ fun MapScreen(
                     properties = properties,
                     uiSettings = uiSettings,
                     onMapLoaded = { DebugLogger.i("MapScreen") { "GoogleMap loaded" } }
-            )
+            ) {
+                // Phase 8: Render a standard marker for each team member who has a known location
+                members.forEach { member ->
+                    val loc = member.lastLocation ?: return@forEach
+                    // MarkerState is keyed to the member's latest coordinates so it
+                    // recomposes (and re-positions) on every location update.
+                    val markerState =
+                            remember(member.userId, loc.latitude, loc.longitude) {
+                                MarkerState(position = LatLng(loc.latitude, loc.longitude))
+                            }
+                    Marker(
+                            state = markerState,
+                            title = member.displayName ?: "Member",
+                            snippet =
+                                    String.format(
+                                            Locale.US,
+                                            "%.4f, %.4f",
+                                            loc.latitude,
+                                            loc.longitude
+                                    )
+                    )
+                }
+            }
 
             // ── Live lat/lng chip ─────────────────────────────────────────────
             AnimatedVisibility(
@@ -324,7 +411,6 @@ fun MapScreen(
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(28.dp)
                         )
-
                         Text(
                                 text =
                                         if (isPermanentlyDenied) {
@@ -335,16 +421,11 @@ fun MapScreen(
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurface
                         )
-
                         Spacer(modifier = Modifier.size(2.dp))
-
                         if (isPermanentlyDenied) {
-                            OutlinedButton(
-                                    onClick = {
-                                        DebugLogger.d("MapScreen") { "Open Settings tapped" }
-                                        context.openAppSettings()
-                                    }
-                            ) { Text("Open Settings") }
+                            OutlinedButton(onClick = { context.openAppSettings() }) {
+                                Text("Open Settings")
+                            }
                         } else {
                             Button(onClick = onGrantLocationClick) { Text("Grant Permission") }
                         }
@@ -355,7 +436,75 @@ fun MapScreen(
     }
 }
 
-// ─── Extension helpers ──────────────────────────────────────────────────────
+
+// ─── Phase 8: Member bottom sheet ────────────────────────────────────────────
+
+
+@Composable
+private fun MemberListSheet(members: List<TeamMember>, currentLocation: Location?) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+                "${members.size} team member${if (members.size != 1) "s" else ""}",
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+        )
+        LazyColumn(contentPadding = PaddingValues(bottom = 16.dp)) {
+            items(members, key = { it.userId }) { member ->
+                val distanceText =
+                        remember(member.lastLocation, currentLocation) {
+                            val loc = member.lastLocation
+                            val cur = currentLocation
+                            if (loc != null && cur != null) {
+                                val result = FloatArray(1)
+                                Location.distanceBetween(
+                                        cur.latitude,
+                                        cur.longitude,
+                                        loc.latitude,
+                                        loc.longitude,
+                                        result
+                                )
+                                val dist = result[0]
+                                if (dist < 1000) "${dist.toInt()} m away"
+                                else "${"%.1f".format(dist / 1000)} km away"
+                            } else "Location unknown"
+                        }
+                ListItem(
+                        headlineContent = { Text(member.displayName ?: "Unknown") },
+                        supportingContent = {
+                            Text(distanceText, style = MaterialTheme.typography.bodySmall)
+                        },
+                        leadingContent = {
+                            if (member.photoUrl != null) {
+                                AsyncImage(
+                                        model = member.photoUrl,
+                                        contentDescription = member.displayName,
+                                        modifier = Modifier.size(36.dp).clip(CircleShape),
+                                        contentScale = ContentScale.Crop
+                                )
+                            } else {
+                                Surface(
+                                        modifier = Modifier.size(36.dp),
+                                        shape = CircleShape,
+                                        color = MaterialTheme.colorScheme.primaryContainer
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text(
+                                                (member.displayName?.firstOrNull() ?: '?')
+                                                        .uppercase(),
+                                                style = MaterialTheme.typography.titleSmall,
+                                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                )
+            }
+        }
+    }
+}
+
+// ─── Extension helpers ───────────────────────────────────────────────────────
 
 private fun Context.hasAnyLocationPermission(): Boolean {
     val coarse =
