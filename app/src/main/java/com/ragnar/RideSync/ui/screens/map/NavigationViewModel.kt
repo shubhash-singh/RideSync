@@ -31,7 +31,7 @@ class NavigationViewModel @Inject constructor(private val directionsRepository: 
     private companion object {
         private const val TAG = "NavigationViewModel"
         private const val REROUTE_DISTANCE_METERS = 50f
-        private const val DESTINATION_CHANGE_METERS = 5f
+        private const val DESTINATION_CHANGE_METERS = 20f
     }
 
     private val _routeState = MutableStateFlow<NavigationUiState>(NavigationUiState.Idle)

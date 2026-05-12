@@ -30,7 +30,9 @@ import com.ragnar.RideSync.utils.DebugLogger
 fun RideSyncNavGraph(
     navController: NavHostController,
     startDestination: String = Screen.Login.route,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** Called with true when the Map screen enters composition, false when it leaves. */
+    onMapScreenActive: (Boolean) -> Unit = {}
 ) {
     if (BuildConfig.DEBUG) {
         LaunchedEffect(startDestination) {
@@ -91,8 +93,14 @@ fun RideSyncNavGraph(
             ProfileScreen(onBack = { navController.popBackStack() })
         }
 
-        // Phase 5 & 6: Map screen (Phase 8 adds team member markers via TeamMapViewModel)
+        // Phase 5, 6 & 11: Map screen with PiP support
         composable(route = Screen.Map.route) {
+            // Notify MainActivity whenever this destination is active so it knows
+            // whether to enter PiP on home-button press.
+            DisposableEffect(Unit) {
+                onMapScreenActive(true)
+                onDispose { onMapScreenActive(false) }
+            }
             MapScreen(onBack = { navController.popBackStack() })
         }
 

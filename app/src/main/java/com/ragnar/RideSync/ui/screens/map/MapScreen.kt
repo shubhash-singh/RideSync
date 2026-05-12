@@ -82,6 +82,7 @@ import com.mapbox.maps.extension.compose.annotation.generated.PointAnnotation
 import com.mapbox.maps.extension.compose.annotation.generated.PolylineAnnotation
 import com.mapbox.maps.extension.compose.style.MapStyle
 import com.mapbox.maps.plugin.gestures.OnMapLongClickListener
+import com.mapbox.maps.plugin.gestures.gestures
 import com.mapbox.maps.plugin.locationcomponent.createDefault2DPuck
 import com.mapbox.maps.plugin.locationcomponent.location
 import com.ragnar.RideSync.domain.model.TeamMember
@@ -160,19 +161,15 @@ fun MapScreen(
     }
 
     LaunchedEffect(currentLocation, destinationLat, destinationLng) {
-        val loc = currentLocation
-        val lat = destinationLat
-        val lng = destinationLng
-        if (loc != null && lat != null && lng != null) {
-            navigationViewModel.updateRoute(
-                    originLatitude = loc.latitude,
-                    originLongitude = loc.longitude,
-                    destinationLatitude = lat,
-                    destinationLongitude = lng
-            )
-        } else {
-            navigationViewModel.clearRoute()
-        }
+        val loc = currentLocation ?: return@LaunchedEffect
+        val lat = destinationLat ?: return@LaunchedEffect
+        val lng = destinationLng ?: return@LaunchedEffect
+        navigationViewModel.updateRoute(
+                originLatitude = loc.latitude,
+                originLongitude = loc.longitude,
+                destinationLatitude = lat,
+                destinationLongitude = lng
+        )
     }
 
     LaunchedEffect(destinationState) {
@@ -306,17 +303,6 @@ fun MapScreen(
     }
 
     val scaffoldState = rememberBottomSheetScaffoldState()
-    val mapLongClickListener =
-            remember(isLeader, hasTeam) {
-                OnMapLongClickListener { point ->
-                    if (isLeader && hasTeam) {
-                        teamMapViewModel.setDestination(point.latitude(), point.longitude())
-                        true
-                    } else {
-                        false
-                    }
-                }
-            }
 
     BottomSheetScaffold(
             modifier = modifier,
@@ -372,7 +358,6 @@ fun MapScreen(
             MapboxMap(
                     modifier = Modifier.fillMaxSize(),
                     mapViewportState = mapViewportState,
-                    onMapLongClickListener = mapLongClickListener,
                     style = { MapStyle(style = com.mapbox.maps.Style.STANDARD) },
             ) {
                 // Configure location puck on first load and re-apply when permission changes.
@@ -382,6 +367,26 @@ fun MapScreen(
                         locationPuck = createDefault2DPuck(withBearing = true)
                     }
                     DebugLogger.i("MapScreen") { "Mapbox map ready, puck enabled=$hasLocationPermission" }
+                }
+
+                // Fix #1 & #2: Register the long-click listener inside MapEffect so it has
+                // access to the MapView. Keys (isLeader, hasTeam) trigger cleanup + re-registration
+                // on every change, preventing duplicate listeners from stacking up.
+                MapEffect(isLeader, hasTeam) { mapView ->
+                    val listener = OnMapLongClickListener { point ->
+                        if (isLeader && hasTeam) {
+                            teamMapViewModel.setDestination(point.latitude(), point.longitude())
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    mapView.gestures.addOnMapLongClickListener(listener)
+                    try {
+                        kotlinx.coroutines.awaitCancellation()
+                    } finally {
+                        mapView.gestures.removeOnMapLongClickListener(listener)
+                    }
                 }
 
                 // Phase 8: Render a PointAnnotation for each team member who has a known location.

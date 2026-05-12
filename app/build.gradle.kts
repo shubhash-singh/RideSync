@@ -39,7 +39,7 @@ android {
         buildConfigField(
             "String",
             "MAPBOX_ACCESS_TOKEN",
-            "\"${localProperties.getProperty("MAPBOX_ACCESS_TOKEN", "")}\""
+            "\"${localProperties.getProperty("MAPBOX_ACCESS_TOKEN", "").trim()}\""
         )
     }
 
