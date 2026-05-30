@@ -1,6 +1,7 @@
 package com.ragnar.RideSync.data.repository
 
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.messaging.FirebaseMessaging
 import com.ragnar.RideSync.data.model.TeamDto
 import com.ragnar.RideSync.data.model.TeamMemberDto
 import com.ragnar.RideSync.data.model.toDomain
@@ -10,6 +11,7 @@ import com.ragnar.RideSync.domain.model.Team
 import com.ragnar.RideSync.domain.model.TeamMember
 import com.ragnar.RideSync.domain.model.User
 import com.ragnar.RideSync.domain.repository.TeamRepository
+import com.ragnar.RideSync.service.RideSyncMessagingService
 import com.ragnar.RideSync.utils.Constants
 import com.ragnar.RideSync.utils.DebugLogger
 import javax.inject.Inject
@@ -143,6 +145,11 @@ class FirestoreTeamRepository @Inject constructor(private val firestore: Firebas
 
             val team = teamDto.toDomain(teamId)
             DebugLogger.i(TAG) { "joinTeamByCode success: teamId=$teamId" }
+
+            // Phase 12: Subscribe this device to the team's FCM topic so future Cloud Function
+            // or server sends can fan-out to the whole team via topic://team_{teamId}.
+            subscribeToTeamTopic(teamId)
+
             emit(Result.Success(team))
         } catch (e: Exception) {
             DebugLogger.e(TAG, e) { "joinTeamByCode failed: ${e.localizedMessage}" }
@@ -171,6 +178,10 @@ class FirestoreTeamRepository @Inject constructor(private val firestore: Firebas
                     }
                     .await()
             DebugLogger.i(TAG) { "leaveTeam success: userId=$userId left teamId=$teamId" }
+
+            // Phase 12: Unsubscribe so the user no longer receives team FCM broadcasts.
+            unsubscribeFromTeamTopic(teamId)
+
             emit(Result.Success(Unit))
         } catch (e: Exception) {
             DebugLogger.e(TAG, e) { "leaveTeam failed: ${e.localizedMessage}" }
@@ -205,6 +216,10 @@ class FirestoreTeamRepository @Inject constructor(private val firestore: Firebas
                     }
                     .await()
             DebugLogger.i(TAG) { "disbandTeam success: teamId=$teamId" }
+
+            // Phase 12: Leader unsubscribes too (they disbanded, so no more broadcasts).
+            unsubscribeFromTeamTopic(teamId)
+
             emit(Result.Success(Unit))
         } catch (e: Exception) {
             DebugLogger.e(TAG, e) { "disbandTeam failed: ${e.localizedMessage}" }
@@ -329,4 +344,36 @@ class FirestoreTeamRepository @Inject constructor(private val firestore: Firebas
                     lastLocation = user.lastLocation?.toDto(),
                     joinedAt = joinedAt
             )
+
+    // ── Phase 12: FCM topic helpers ───────────────────────────────────────────
+
+    /**
+     * Subscribes this device to the FCM topic `team_{teamId}`. Any future Cloud Function or
+     * direct FCM v1 API call targeting this topic will deliver a notification to all subscribers.
+     */
+    private fun subscribeToTeamTopic(teamId: String) {
+        val topic = RideSyncMessagingService.teamTopic(teamId)
+        FirebaseMessaging.getInstance().subscribeToTopic(topic)
+            .addOnSuccessListener {
+                DebugLogger.d(TAG) { "Subscribed to FCM topic: $topic" }
+            }
+            .addOnFailureListener { e ->
+                DebugLogger.e(TAG, e) { "Failed to subscribe to FCM topic $topic: ${e.localizedMessage}" }
+            }
+    }
+
+    /**
+     * Unsubscribes this device from the FCM topic `team_{teamId}` so it no longer receives
+     * broadcasts after leaving or the team being disbanded.
+     */
+    private fun unsubscribeFromTeamTopic(teamId: String) {
+        val topic = RideSyncMessagingService.teamTopic(teamId)
+        FirebaseMessaging.getInstance().unsubscribeFromTopic(topic)
+            .addOnSuccessListener {
+                DebugLogger.d(TAG) { "Unsubscribed from FCM topic: $topic" }
+            }
+            .addOnFailureListener { e ->
+                DebugLogger.e(TAG, e) { "Failed to unsubscribe from FCM topic $topic: ${e.localizedMessage}" }
+            }
+    }
 }

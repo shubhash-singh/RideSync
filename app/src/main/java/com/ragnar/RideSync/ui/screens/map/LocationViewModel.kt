@@ -1,6 +1,9 @@
 package com.ragnar.RideSync.ui.screens.map
 
+import android.content.Context
 import android.location.Location
+import android.os.Build
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
@@ -8,6 +11,7 @@ import com.ragnar.RideSync.domain.model.User
 import com.ragnar.RideSync.domain.model.UserLocation
 import com.ragnar.RideSync.domain.repository.LocationRepository
 import com.ragnar.RideSync.domain.repository.UserRepository
+import com.ragnar.RideSync.service.LocationForegroundService
 import com.ragnar.RideSync.utils.DebugLogger
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -25,6 +29,9 @@ import kotlinx.coroutines.launch
  * – Collects [LocationRepository.observeLocation] and exposes the latest [Location] as a
  * [StateFlow]. – On every location emission writes the updated [UserLocation] to Firestore via
  * [UserRepository.upsertUser] so all future phases have fresh data.
+ *
+ * Phase 11: Also manages the [LocationForegroundService] lifecycle so background tracking
+ * continues when the app is minimised.
  */
 @HiltViewModel
 class LocationViewModel
@@ -63,9 +70,33 @@ constructor(
                 .launchIn(viewModelScope)
     }
 
-    // -------------------------------------------------------------------------
-    // Private helpers
-    // -------------------------------------------------------------------------
+    // ── Phase 11: Foreground service management ───────────────────────────────
+
+    /**
+     * Starts [LocationForegroundService] so location tracking continues when the app is
+     * backgrounded. Safe to call multiple times — the service ignores repeated ACTION_START.
+     * Must be called only after location permission is granted.
+     */
+    fun startForegroundService(context: Context) {
+        DebugLogger.d(TAG) { "startForegroundService()" }
+        val intent = LocationForegroundService.startIntent(context)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            ContextCompat.startForegroundService(context, intent)
+        } else {
+            context.startService(intent)
+        }
+    }
+
+    /**
+     * Sends [LocationForegroundService.ACTION_STOP] to gracefully shut down the background
+     * tracking service (e.g. when the user leaves the team).
+     */
+    fun stopForegroundService(context: Context) {
+        DebugLogger.d(TAG) { "stopForegroundService()" }
+        context.startService(LocationForegroundService.stopIntent(context))
+    }
+
+    // ── Private helpers ───────────────────────────────────────────────────────
 
     private fun pushToFirestore(location: Location) {
         val uid =
@@ -89,3 +120,4 @@ constructor(
         }
     }
 }
+

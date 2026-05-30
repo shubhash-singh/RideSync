@@ -102,4 +102,22 @@ class FirestoreUserRepository @Inject constructor(
 
         return data
     }
+
+    /**
+     * Phase 12: Persists the FCM registration token to `users/{userId}.fcmToken`.
+     * Uses a targeted field update so we never overwrite the rest of the user document.
+     */
+    override suspend fun storeFcmToken(userId: String, token: String) {
+        DebugLogger.d(TAG) { "storeFcmToken(uid=$userId)" }
+        try {
+            firestore
+                .collection(Constants.COLLECTION_USERS)
+                .document(userId)
+                .update("fcmToken", token)
+                .await()
+            DebugLogger.i(TAG) { "storeFcmToken success for uid=$userId" }
+        } catch (e: Exception) {
+            DebugLogger.e(TAG, e) { "storeFcmToken failed for uid=$userId: ${e.localizedMessage}" }
+        }
+    }
 }

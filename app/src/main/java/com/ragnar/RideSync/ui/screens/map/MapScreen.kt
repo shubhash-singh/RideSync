@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -105,6 +106,11 @@ fun MapScreen(
     var requestedOnce by rememberSaveable { mutableStateOf(false) }
     var showRationaleDialog by rememberSaveable { mutableStateOf(false) }
     var hasLocationPermission by remember { mutableStateOf(context.hasAnyLocationPermission()) }
+    // Phase 11: Track background location permission separately (API 29+).
+    var hasBackgroundLocationPermission by remember {
+        mutableStateOf(context.hasBackgroundLocationPermission())
+    }
+    var showBackgroundRationaleDialog by rememberSaveable { mutableStateOf(false) }
     var cameraMovedToUser by rememberSaveable { mutableStateOf(false) }
 
     // Observe live location from ViewModel
@@ -146,6 +152,7 @@ fun MapScreen(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 hasLocationPermission = context.hasAnyLocationPermission()
+                hasBackgroundLocationPermission = context.hasBackgroundLocationPermission()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -157,6 +164,22 @@ fun MapScreen(
         if (hasLocationPermission) {
             DebugLogger.d("MapScreen") { "Permission granted – starting location tracking" }
             locationViewModel.startTracking()
+        }
+    }
+
+    // Phase 11: Start the foreground service when in a team + permission is granted.
+    // The service keeps running when the map screen leaves composition.
+    LaunchedEffect(hasLocationPermission, hasTeam) {
+        if (hasLocationPermission && hasTeam) {
+            DebugLogger.d("MapScreen") { "Team active + permission granted — starting foreground service" }
+            locationViewModel.startForegroundService(context)
+        }
+    }
+
+    // Phase 11: Stop the service when leaving the team (hasTeam becomes false).
+    LaunchedEffect(hasTeam) {
+        if (!hasTeam) {
+            locationViewModel.stopForegroundService(context)
         }
     }
 
@@ -199,6 +222,14 @@ fun MapScreen(
                 requestedOnce && !hasLocationPermission && !shouldShowRationale
             }
 
+    val backgroundLocationLauncher =
+        rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.RequestPermission()
+        ) { granted ->
+            hasBackgroundLocationPermission = granted
+            DebugLogger.d("MapScreen") { "Background location granted=$granted" }
+        }
+
     val requestPermissions: () -> Unit = {
         DebugLogger.d("MapScreen") { "Requesting location permissions..." }
         requestedOnce = true
@@ -208,6 +239,15 @@ fun MapScreen(
                         Manifest.permission.ACCESS_COARSE_LOCATION
                 )
         )
+    }
+
+    // Phase 11: After foreground permission is granted, request background location (API 29+).
+    // We only prompt once foreground permission is confirmed and the user is in a team.
+    LaunchedEffect(hasLocationPermission, hasTeam, hasBackgroundLocationPermission) {
+        if (hasLocationPermission && hasTeam && !hasBackgroundLocationPermission &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            showBackgroundRationaleDialog = true
+        }
     }
 
     val onGrantLocationClick: () -> Unit = {
@@ -239,6 +279,37 @@ fun MapScreen(
                 dismissButton = {
                     OutlinedButton(onClick = { showRationaleDialog = false }) { Text("Not now") }
                 }
+        )
+    }
+
+    // Phase 11: Background location rationale dialog (shown after foreground is granted).
+    if (showBackgroundRationaleDialog) {
+        AlertDialog(
+            onDismissRequest = { showBackgroundRationaleDialog = false },
+            title = { Text("Allow background location?") },
+            text = {
+                Text(
+                    "To keep sharing your location with teammates when the app is minimised, " +
+                    "select \"Allow all the time\" on the next screen."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showBackgroundRationaleDialog = false
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            backgroundLocationLauncher.launch(
+                                Manifest.permission.ACCESS_BACKGROUND_LOCATION
+                            )
+                        }
+                    }
+                ) { Text("Continue") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showBackgroundRationaleDialog = false }) {
+                    Text("Not now")
+                }
+            }
         )
     }
 
@@ -796,6 +867,18 @@ private fun Context.hasAnyLocationPermission(): Boolean {
             ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
                     PackageManager.PERMISSION_GRANTED
     return coarse || fine
+}
+
+/**
+ * Phase 11: Returns true if ACCESS_BACKGROUND_LOCATION is granted (API 29+).
+ * On API < 29 the concept does not exist — foreground permission is sufficient —
+ * so we return true to avoid prompting unnecessarily.
+ */
+private fun Context.hasBackgroundLocationPermission(): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return true
+    return ContextCompat.checkSelfPermission(
+        this, Manifest.permission.ACCESS_BACKGROUND_LOCATION
+    ) == PackageManager.PERMISSION_GRANTED
 }
 
 private fun Context.openAppSettings() {
